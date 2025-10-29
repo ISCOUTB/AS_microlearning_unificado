@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Plataforma de Video</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background-color: #fafafa;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    header {
+      width: 100%;
+      background: white;
+      border-bottom: 1px solid #dbdbdb;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 10px 0;
+      position: sticky;
+      top: 0;
+      z-index: 1000;
+    }
+    .form-box {
+      border: 1px solid #ccc;
+      padding: 20px;
+      margin-bottom: 20px;
+      width: 320px;
+      background: white;
+    }
+    input {
+      display: block;
+      margin: 6px 0 12px;
+      padding: 8px;
+      width: 100%;
+      box-sizing: border-box;
+    }
+    .feed-container {
+      width: 100%;
+      max-width: 600px;
+      margin: 0 auto;
+    }
+    .video-card {
+      border: 1px solid #ccc;
+      background: #fff;
+      margin-bottom: 20px;
+      padding: 10px;
+    }
+    .video-card video {
+      width: 100%;
+      max-width: 400px;
+      display: block;
+      margin-bottom: 8px;
+    }
+    .logout-btn {
+      margin: 20px 0;
+      padding: 8px 16px;
+      background: #e74c3c;
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1 style="margin:0;">VideoApp</h1>
+    <img src="/images/image.png" alt="Logo" style="height:32px;vertical-align:middle;margin-left:10px;">
+    <button class="logout-btn" onclick="logout()" style="margin-left:20px;">Cerrar sesión</button>
+  </header>
+  <div class="feed-container">
+    <h2 id="bienvenida"></h2>
+    <form id="formSubirVideo" enctype="multipart/form-data" class="form-box">
+      <h3>Subir video</h3>
+      <input type="text" id="tituloVideo" placeholder="Título" required>
+      <input type="text" id="descripcionVideo" placeholder="Descripción">
+      <input type="text" id="etiquetaVideo" placeholder="Etiqueta">
+      <input type="file" id="archivoVideo" accept="video/*" required>
+      <button type="submit">Subir</button>
+    </form>
+    <div id="feedVideos">
+      <h3 style="display:inline-block;">Feed de videos</h3>
+      <div id="videos-container"></div>
+      <div id="loadingMsg" style="text-align:center; margin:20px; font-weight:bold;">Cargando...</div>
+    </div>
+  </div>
+  <script>
+    // Mostrar bienvenida
+    const nombre = localStorage.getItem('nombre');
+    if (!nombre) {
+      window.location.href = '/static/index.html';
+    } else {
+      document.getElementById('bienvenida').textContent = "Bienvenido, " + nombre + " 🎉";
+    }
+
+    let page = 1;
+    let loading = false;
+    let hasMore = true;
+    let mostrados = [];
+
+    // 🔹 Verificar el estado del like de un video
+    async function cargarLikeEstado(id_video) {
+      // Verifica que el elemento del video existe antes de consultar likes
+      if (!document.getElementById(`likebtn_${id_video}`)) return;
+      const usuarioId = localStorage.getItem("usuarioId");
+      if (!usuarioId) return;
+      fetch(`/videos/${id_video}/like?id_usuario=${usuarioId}`)
+        .then(res => {
+          if (res.ok) return res.json();
+          // Si el video no existe, no hagas nada (evita error 404)
+          return null;
+        })
+        .then(data => {
+          if (!data) return;
+          document.getElementById(`likes_${id_video}`).textContent = data.likes;
+          const btn = document.getElementById(`likebtn_${id_video}`);
+          if (btn) btn.style.color = data.liked ? "red" : "black";
+        });
+    }
+
+    function mostrarCargando(msg = 'Cargando...') {
+      document.getElementById('loadingMsg').textContent = msg;
+      document.getElementById('loadingMsg').style.display = 'block';
+    }
+    function ocultarCargando() {
+      document.getElementById('loadingMsg').style.display = 'none';
+    }
+
+    async function cargarVideosIncrementalAuto() {
+      if (loading) {
+        ocultarCargando();
+        return;
+      }
+      loading = true;
+      mostrarCargando();
+      const res = await fetch(`/videos?page=${page}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (page === 1 && data.videos.length === 0) {
+          document.getElementById('videos-container').innerHTML = '<p>No hay videos para mostrar.</p>';
+          ocultarCargando();
+          return;
+        } else {
+          data.videos.forEach(v => {
+            mostrados.push(v.id_video);
+            const div = document.createElement('div');
+            div.className = 'video-card';
+            div.innerHTML = `
+              <div style="display:flex; justify-content: space-between; align-items: flex-start;">
+                <div style="font-weight:bold;">${v.usuario}</div>
+                <div style="font-weight:bold;">#${v.etiqueta}</div>
+              </div>
+              <div style="text-align:center; font-weight:bold; font-size:1.2em;">${v.titulo}</div>
+              <video controls style="max-width:100%; margin: 10px 0; display:block;">
+                <source src="${v.ruta.startsWith('/') ? v.ruta : '/' + v.ruta}" type="video/mp4">
+              </video>
+              <div style="display:flex; justify-content: flex-start;">${v.descripcion}</div>
+              <button id="likebtn_${v.id_video}" onclick="darLike('${v.id_video}')" style="margin-top:8px;${v.liked ? 'background:#ccc;color:#333;' : ''}">Like</button>
+              <span id="likes_${v.id_video}">${v.likes ?? 0}</span> likes
+              ${(v.usuario === localStorage.getItem("nombre")) ? `<br><button onclick=\"eliminarVideo('${v.id_video}')\">Eliminar</button>` : ""}
+            `;
+            document.getElementById('videos-container').appendChild(div);
+            cargarLikeEstado(v.id_video); 
+          });
+        }
+        hasMore = data.has_more;
+        if (!hasMore) {
+          ocultarCargando();
+          // Iniciar ciclo random al terminar los videos normales
+          setTimeout(cargarVideosRandomAuto, 1000);
+          return;
+        }
+        page++;
+        setTimeout(cargarVideosIncrementalAuto, 1000);
+      } else {
+        ocultarCargando();
+      }
+      loading = false;
+    }
+
+    async function cargarVideosRandomAuto() {
+      const usuarioId = localStorage.getItem("usuarioId");
+      mostrarCargando();
+      const res = await fetch(`/videos/random?id_usuario=${usuarioId}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.length === 0) {
+          ocultarCargando();
+          alert("No hay videos en la base de datos.");
+          return;
+        }
+        data.forEach(v => {
+          const div = document.createElement("div");
+          div.className = "video-card";
+          div.innerHTML = `
+            <div style="display:flex; justify-content: space-between; align-items: flex-start;">
+              <div style="font-weight:bold;">${v.usuario}</div>
+              <div style="font-weight:bold;">#${v.etiqueta}</div>
+            </div>
+            <div style="text-align:center; font-weight:bold; font-size:1.2em;">${v.titulo}</div>
+            <video controls style="max-width:100%; margin: 10px 0; display:block;">
+              <source src="${v.ruta.startsWith('/') ? v.ruta : '/' + v.ruta}" type="video/mp4">
+            </video>
+            <div style="display:flex; justify-content: flex-start;">${v.descripcion}</div>
+            <button id="likebtn_${v.id_video}" onclick="darLike('${v.id_video}')" style="margin-top:8px;${v.liked ? 'color:red;' : ''}">Like</button>
+            <span id="likes_${v.id_video}">${v.likes ?? 0}</span> likes
+            ${(v.usuario === localStorage.getItem("nombre")) ? `<br><button onclick=\"eliminarVideo('${v.id_video}')\">Eliminar</button>` : ""}
+          `;
+          document.getElementById("videos-container").appendChild(div);
+          cargarLikeEstado(v.id_video);
+        });
+        // Al terminar la tanda random, revisa si hay videos nuevos
+        setTimeout(async () => {
+          // Busca el último id_video mostrado (mayor)
+          const cards = document.querySelectorAll('.video-card');
+          let ultimoId = 0;
+          cards.forEach(card => {
+            const match = card.innerHTML.match(/likebtn_(\d+)/);
+            if (match) {
+              const id = parseInt(match[1]);
+              if (id > ultimoId) ultimoId = id;
+            }
+          });
+          const nuevosRes = await fetch(`/videos/nuevos?ultimo_id=${ultimoId}`);
+          if (nuevosRes.ok) {
+            const nuevos = await nuevosRes.json();
+            if (nuevos.length > 0) {
+              // Si hay nuevos, vuelve al ciclo normal
+              page = 1;
+              hasMore = true;
+              cargarVideosIncrementalAuto();
+              return;
+            }
+          }
+          // Si no hay nuevos, sigue con random
+          cargarVideosRandomAuto();
+        }, 1000);
+      } else {
+        ocultarCargando();
+      }
+    }
+
+    window.onload = function() {
+      document.getElementById('videos-container').innerHTML = '';
+      page = 1;
+      hasMore = true;
+      mostrados = [];
+      cargarVideosIncrementalAuto();
+      // Si quieres que random inicie automáticamente, descomenta la siguiente línea:
+      // cargarVideosRandomAuto();
+    };
+
+    document.getElementById('formSubirVideo').onsubmit = async function(e) {
+      e.preventDefault();
+      const titulo = document.getElementById('tituloVideo').value;
+      const descripcion = document.getElementById('descripcionVideo').value;
+      const etiqueta = document.getElementById('etiquetaVideo').value;
+      const archivo = document.getElementById('archivoVideo').files[0];
+      const usuarioId = localStorage.getItem('usuarioId');
+      const formData = new FormData();
+      formData.append('titulo', titulo);
+      formData.append('descripcion', descripcion);
+      formData.append('etiqueta', etiqueta);
+      formData.append('file', archivo);
+      formData.append('id_usuario', usuarioId);
+      const res = await fetch('/upload_video', {
+        method: 'POST',
+        body: formData
+      });
+      if (res.ok) {
+        alert('Video subido ✅');
+        page = 1;
+        hasMore = true;
+        mostrados = [];
+        document.getElementById('videos-container').innerHTML = '';
+        document.getElementById('formSubirVideo').reset();
+        // Espera 1 segundo antes de recargar el feed
+        setTimeout(cargarVideosIncrementalAuto, 1000);
+      } else {
+        alert('Error al subir video ❌');
+      }
+    };
+
+    async function eliminarVideo(id_video) {
+      const usuarioId = localStorage.getItem('usuarioId');
+      if (!confirm('¿Seguro que deseas eliminar este video?')) return;
+      // Elimina el video del DOM antes de recargar el feed
+      const card = document.getElementById(`likebtn_${id_video}`)?.closest('.video-card');
+      if (card) card.remove();
+      const res = await fetch(`/videos/${id_video}?id_usuario=${usuarioId}`, { method: 'DELETE' });
+      if (res.ok) {
+        alert('Video eliminado');
+        page = 1;
+        hasMore = true;
+        mostrados = [];
+        document.getElementById('videos-container').innerHTML = '';
+        cargarVideosIncrementalAuto();
+      } else {
+        const err = await res.json().catch(()=>({detail:'Error'}));
+        alert('No se pudo eliminar: ' + (err.detail || res.status));
+      }
+    }
+
+    function logout() {
+      localStorage.removeItem("token");
+      localStorage.removeItem("usuarioId");
+      localStorage.removeItem("nombre");
+      window.location.href = '/static/index.html';
+    }
+
+    async function darLike(id_video) {
+      const usuarioId = localStorage.getItem("usuarioId");
+      const res = await fetch(`/videos/${id_video}/like?id_usuario=${usuarioId}`, { method: "POST" }); // Cambia a "PUT" si el backend lo requiere
+      if (res.ok) {
+        const data = await res.json();
+        document.getElementById(`likes_${id_video}`).textContent = data.likes;
+        const btn = document.getElementById(`likebtn_${id_video}`);
+        btn.style.color = data.liked ? "red" : "black";
+      } else {
+        const err = await res.json().catch(() => ({ detail: "Error" }));
+        alert("No se pudo dar like: " + (err.detail || res.status));
+      }
+    }
+
+    document.addEventListener("DOMContentLoaded", () => {
+      setTimeout(() => {
+        const videos = document.querySelectorAll("[id^='likebtn_']");
+        videos.forEach(btn => {
+          const id_video = btn.id.replace("likebtn_", "");
+          cargarLikeEstado(id_video);
+        });
+      }, 500);
+    });
+    
+  </script>
+</body>
+</html>

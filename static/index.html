@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VideoApp - Inicio de sesión</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background-color: #f5f5f5;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    header {
+      width: 100%;
+      background: white;
+      border-bottom: 1px solid #ddd;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 12px 0;
+      position: sticky;
+      top: 0;
+    }
+    .logo {
+      font-size: 24px;
+      font-weight: bold;
+      color: #333;
+    }
+    .container {
+      margin-top: 40px;
+      width: 100%;
+      max-width: 360px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 24px;
+    }
+    .form-box {
+      width: 100%;
+      background: white;
+      border-radius: 8px;
+      box-shadow: 0 0 8px rgba(0,0,0,0.1);
+      padding: 20px;
+    }
+    h2 {
+      text-align: center;
+      color: #333;
+    }
+    input {
+      width: 100%;
+      padding: 10px;
+      margin: 8px 0;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      font-size: 14px;
+    }
+    button {
+      width: 100%;
+      background: #3498db;
+      color: white;
+      padding: 10px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 15px;
+    }
+    button:hover {
+      background: #2980b9;
+    }
+    .footer {
+      margin-top: 20px;
+      font-size: 13px;
+      color: #666;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="logo">🎬 VideoApp</div>
+  </header>
+
+  <div class="container">
+    <!-- Registro -->
+    <div class="form-box">
+      <h2>Crear cuenta</h2>
+      <input type="text" id="regNombre" placeholder="Nombre completo" required>
+      <input type="email" id="regCorreo" placeholder="Correo electrónico" required>
+      <input type="password" id="regContrasena" placeholder="Contraseña" required>
+      <button onclick="crearUsuario()">Registrarse</button>
+    </div>
+
+    <!-- Inicio de sesión -->
+    <div class="form-box">
+      <h2>Iniciar sesión</h2>
+      <input type="email" id="loginCorreo" placeholder="Correo electrónico" required>
+      <input type="password" id="loginContrasena" placeholder="Contraseña" required>
+      <button onclick="login()">Entrar</button>
+    </div>
+  </div>
+
+  <div class="footer">
+    <p> Microlearning · 2025</p>
+  </div>
+
+  <script>
+    async function crearUsuario() {
+      const nombre = document.getElementById('regNombre').value.trim();
+      const correo = document.getElementById('regCorreo').value.trim();
+      const contrasena = document.getElementById('regContrasena').value.trim();
+
+      if (!nombre || !correo || !contrasena) {
+        alert("Por favor completa todos los campos.");
+        return;
+      }
+
+      const res = await fetch('/usuarios', {
+        method: 'POST',
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nombre, correo, contrasena })
+      });
+
+      if (res.ok) {
+        alert("✅ Usuario registrado correctamente. Ahora inicia sesión.");
+      } else {
+        const err = await res.json().catch(()=>({detail:"Error desconocido"}));
+        alert("❌ Error al registrarse: " + (err.detail || res.status));
+      }
+    }
+
+    async function login() {
+      const correo = document.getElementById('loginCorreo').value.trim();
+      const contrasena = document.getElementById('loginContrasena').value.trim();
+
+      if (!correo || !contrasena) {
+        alert("Por favor ingresa tus credenciales.");
+        return;
+      }
+
+      const res = await fetch('/login', {
+        method: 'POST',
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ correo, contrasena })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        localStorage.setItem("usuarioId", data.id_usuario);
+        localStorage.setItem("nombre", data.nombre);
+        window.location.href = "/static/plataforma.html";
+      } else {
+        const err = await res.json().catch(()=>({detail:"Credenciales incorrectas"}));
+        alert("❌ Error: " + (err.detail || res.status));
+      }
+    }
+  </script>
+</body>
+</html>
