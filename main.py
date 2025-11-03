@@ -6,12 +6,17 @@ from typing import List
 from uuid import UUID
 from datetime import timedelta
 import os, random
-from moviepy.editor import VideoFileClip
+# from moviepy.editor import VideoFileClip
+
 
 # Importaciones locales
 import models, schemas, crud
 from database import SessionLocal, engine
 from models import UsuarioApp, Video, Like, Etiqueta, Interaccion
+from fastapi import FastAPI
+from auth.routes import router as auth_router
+from starlette.middleware.sessions import SessionMiddleware
+from dotenv import load_dotenv
 
 # Crear tablas en caso de no existir
 models.Base.metadata.create_all(bind=engine)
@@ -20,6 +25,12 @@ models.Base.metadata.create_all(bind=engine)
 # 🚀 APP CONFIG
 # =====================================================
 app = FastAPI(title="API Plataforma de Videos", version="2.0")
+
+load_dotenv()
+
+app.add_middleware(SessionMiddleware, secret_key=os.getenv("SECRET_KEY"))
+
+app.include_router(auth_router)
 
 # Directorios
 app.mount("/static", StaticFiles(directory="static"), name="static")
