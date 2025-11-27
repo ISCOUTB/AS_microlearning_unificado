@@ -1,0 +1,63 @@
+# flyctl launch added from microlearning_app\.gitignore
+# Miscellaneous
+microlearning_app\**\*.class
+microlearning_app\**\*.log
+microlearning_app\**\*.pyc
+microlearning_app\**\*.swp
+microlearning_app\**\.DS_Store
+microlearning_app\**\.atom
+microlearning_app\**\.build
+microlearning_app\**\.buildlog
+microlearning_app\**\.history
+microlearning_app\**\.svn
+microlearning_app\**\.swiftpm
+microlearning_app\**\migrate_working_dir
+
+# IntelliJ related
+microlearning_app\**\*.iml
+microlearning_app\**\*.ipr
+microlearning_app\**\*.iws
+microlearning_app\**\.idea
+
+# The .vscode folder contains launch configuration and tasks you configure in
+# VS Code which you may wish to be included in version control, so this line
+# is commented out by default.
+#.vscode/
+
+# Flutter/Dart/Pub related
+microlearning_app\**\**\doc\api
+microlearning_app\**\**\ios\Flutter\.last_build_id
+microlearning_app\**\.dart_tool
+microlearning_app\**\.flutter-plugins
+microlearning_app\**\.flutter-plugins-dependencies
+microlearning_app\**\.pub-cache
+microlearning_app\**\.pub
+microlearning_app\build
+
+# Symbolication related
+microlearning_app\**\app.*.symbols
+
+# Obfuscation related
+microlearning_app\**\app.*.map.json
+
+# Android Studio will place build artifacts here
+microlearning_app\android\app\debug
+microlearning_app\android\app\profile
+microlearning_app\android\app\release
+
+# flyctl launch added from microlearning_app\android\.gitignore
+microlearning_app\android\**\gradle-wrapper.jar
+microlearning_app\android\.gradle
+microlearning_app\android\captures
+microlearning_app\android\gradlew
+microlearning_app\android\gradlew.bat
+microlearning_app\android\local.properties
+microlearning_app\android\**\GeneratedPluginRegistrant.java
+microlearning_app\android\**\.cxx
+
+# Remember to never publicly share your keystore.
+# See https://flutter.dev/to/reference-keystore
+microlearning_app\android\**\key.properties
+microlearning_app\android\**\**\*.keystore
+microlearning_app\android\**\**\*.jks
+fly.toml

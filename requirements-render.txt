@@ -1,0 +1,20 @@
+fastapi==0.116.1
+uvicorn==0.33.0
+SQLAlchemy==2.0.43
+psycopg2-binary==2.9.10
+python-dotenv==1.0.1
+python-multipart==0.0.20
+moviepy==1.0.3
+boto3==1.37.38
+pydantic==2.10.6
+# Required by pydantic for EmailStr and email validation (must be >= 2.0 for pydantic v2)
+email-validator==2.2.0
+# Required by starlette SessionMiddleware for session signing
+itsdangerous==2.1.2
+starlette==0.44.0
+httptools==0.6.4
+watchfiles==0.24.0
+websockets==13.1
+authlib==1.2.0
+msal==1.21.0
+gunicorn==23.0.0

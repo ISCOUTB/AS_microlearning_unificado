@@ -1,87 +1,105 @@
-# ===================================================== # 🚀 MAIN.PY # ===================================================== # Archivo principal de la API con FastAPI. # Implementa los endpoints para: # - Usuarios (registro, login) # - Videos (subida, eliminación, listado) # - Likes (gestión de "me gusta") # - Interacciones (vistas, progreso) # - Etiquetas (asociación a videos) # Incluye manejo de archivos multimedia, paginación, # y cálculo automático de duración de video. # =====================================================
-from fastapi import (
-    FastAPI, Depends, HTTPException, UploadFile, File, Form, Query,
-)
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Request, Query
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, Response
 from sqlalchemy.orm import Session
-from pymediainfo import MediaInfo
-from datetime import timedelta
-import os
-import random
+from typing import List
 from uuid import UUID
+from datetime import timedelta
+import os, random, sys
+
+# Importar moviepy de forma correcta
+try:
+    from moviepy import VideoFileClip  # type: ignore
+except ImportError:
+    try:
+        from moviepy.video.io.VideoFileClip import VideoFileClip  # type: ignore
+    except ImportError:
+        # Fallback si falla
+        VideoFileClip = None  # type: ignore
 
 # Importaciones locales
 import models, schemas, crud
 from database import SessionLocal, engine
+from models import UsuarioApp, Video, Like, Etiqueta, Interaccion
+from dotenv import load_dotenv
+from starlette.middleware.sessions import SessionMiddleware
+try:
+    from auth.routes import router as auth_router
+except Exception:
+    auth_router = None
 
-# ===================================================== # ⚙️ CONFIGURACIÓN INICIAL # =====================================================
-# Crear las tablas en caso de que no existan
+# Crear tablas en caso de no existir
 models.Base.metadata.create_all(bind=engine)
 
-# Inicializar aplicación
-app = FastAPI(title="API Plataforma de Videos", version="3.0")
+# =====================================================
+# 🚀 APP CONFIG
+# =====================================================
+app = FastAPI(title="API Plataforma de Videos", version="2.0")
+load_dotenv()
+app.add_middleware(SessionMiddleware, secret_key=os.getenv("SECRET_KEY", "dev-secret"))
 
-# Configuración de directorios estáticos
+# Agregar CORS para permitir acceso desde Flutter Web
+from fastapi.middleware.cors import CORSMiddleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Permitir todos los orígenes (desarrollo)
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+if auth_router is not None:
+    app.include_router(auth_router)
+
+# Directorios
 app.mount("/static", StaticFiles(directory="static"), name="static")
-app.mount("/media", StaticFiles(directory="media"), name="media")
+app.mount("/images", StaticFiles(directory="images"), name="images")
 
-# Directorio donde se almacenan los videos
-VIDEO_DIR = os.path.join(os.path.dirname(__file__), "media")
+VIDEO_DIR = os.path.join(os.path.dirname(__file__), "media")  # Cambia "videos" por "media"
 os.makedirs(VIDEO_DIR, exist_ok=True)
+app.mount("/media", StaticFiles(directory=VIDEO_DIR), name="media")
 
-# ===================================================== # 📦 DEPENDENCIA DE BASE DE DATOS # =====================================================
+
+# =====================================================
+# 📦 DEPENDENCIA DE DB
+# =====================================================
 def get_db():
-    """Crea una sesión temporal a la base de datos."""
     db = SessionLocal()
     try:
         yield db
     finally:
         db.close()
 
-# ===================================================== # ⏱️ FUNCIONES AUXILIARES # =====================================================
-def get_video_duration(path: str) -> str:
-    """
-    Obtiene la duración de un archivo de video utilizando pymediainfo.
-    Retorna la duración en formato HH:MM:SS.
-    """
-    info = MediaInfo.parse(path)
-    for track in info.tracks:
-        if track.track_type == "Video" and track.duration:
-            duracion_seg = track.duration / 1000
-            return str(timedelta(seconds=int(duracion_seg)))
-    return "00:00:00"
 
-# ===================================================== # 🌐 RUTA PRINCIPAL # =====================================================
+# =====================================================
+# 🌐 RUTA PRINCIPAL
+# =====================================================
 @app.get("/")
 def root():
-    """Sirve la página principal de la aplicación."""
     return FileResponse(os.path.join("static", "index.html"))
 
-# ===================================================== # 👤 USUARIOS # =====================================================
+
+# =====================================================
+# 🧍 USUARIOS
+# =====================================================
+@app.get("/usuarios", response_model=List[schemas.UsuarioResponse])
+def listar_usuarios(db: Session = Depends(get_db)):
+    return crud.listar_usuarios(db)
+
 @app.post("/usuarios", response_model=schemas.UsuarioResponse)
 def crear_usuario(usuario: schemas.UsuarioCreate, db: Session = Depends(get_db)):
-    """
-    Registra un nuevo usuario si el correo no está en uso.
-    """
     existente = crud.get_usuario_by_correo(db, usuario.correo)
     if existente:
         raise HTTPException(status_code=400, detail="Correo ya registrado")
     nuevo = crud.crear_usuario(db, usuario.nombre, usuario.correo, usuario.contrasena)
     return schemas.UsuarioResponse.from_orm(nuevo)
 
-@app.get("/usuarios", response_model=list[schemas.UsuarioResponse])
-def listar_usuarios(db: Session = Depends(get_db)):
-    """Lista todos los usuarios registrados en la base de datos."""
-    return crud.listar_usuarios(db)
 
-# ===================================================== # 🔐 LOGIN # =====================================================
+# =====================================================
+# 🔐 LOGIN
+# =====================================================
 @app.post("/login", response_model=schemas.LoginResponse)
 def login(request: schemas.LoginRequest, db: Session = Depends(get_db)):
-    """
-    Valida las credenciales de acceso del usuario.
-    Retorna su información básica en caso de éxito.
-    """
     usuario = crud.get_usuario_by_correo(db, request.correo)
     if not usuario:
         raise HTTPException(status_code=401, detail="Correo no registrado")
@@ -90,216 +108,305 @@ def login(request: schemas.LoginRequest, db: Session = Depends(get_db)):
     return schemas.LoginResponse(
         message="Login exitoso",
         id_usuario=usuario.id_usuario,
-        nombre=usuario.nombre,
+        nombre=usuario.nombre
     )
 
-# ===================================================== # 🎥 VIDEOS # =====================================================
-@app.post("/upload_video")
-def upload_video(
-    titulo: str = Form(...),
-    descripcion: str = Form(""),
-    id_usuario: int = Form(...),
-    etiqueta: str = Form(""),
-    file: UploadFile = File(...),
-    db: Session = Depends(get_db),
-):
-    """
-    Sube un nuevo video, obtiene su duración automáticamente
-    y registra la información en la base de datos.
-    """
-    usuario = crud.get_usuario_by_id(db, id_usuario)
-    if not usuario:
-        raise HTTPException(status_code=401, detail="Usuario no válido")
-    filename = file.filename
-    save_path = os.path.join(VIDEO_DIR, filename)
-    with open(save_path, "wb") as buffer:
-        buffer.write(file.file.read())
-    duracion = get_video_duration(save_path)
-    ruta = f"media/{filename}"
-    nuevo_video = models.Video(
-        titulo=titulo,
-        descripcion=descripcion,
-        duracion=duracion,
-        id_usuario=id_usuario,
-        ruta=ruta,
-    )
-    crud.crear_video(db, nuevo_video)
-    if etiqueta:
-        crud.crear_etiqueta(db, etiqueta, nuevo_video.id_video)
-    return {
-        "message": "Video subido correctamente",
-        "id_video": str(nuevo_video.id_video),
-        "ruta": ruta,
-        "duracion": duracion,
-    }
 
-@app.get("/videos", response_model=schemas.PaginacionVideos)
+# =====================================================
+# 🎥 VIDEOS
+# =====================================================
+@app.get("/videos")
 def listar_videos(page: int = 1, db: Session = Depends(get_db)):
-    """
-    Devuelve una lista paginada de videos, mostrando su autor,
-    etiqueta, likes y duración.
-    """
     limit = 3
     skip = (page - 1) * limit
     videos = crud.get_videos(db, skip=skip, limit=limit)
     total = crud.contar_videos(db)
     has_more = skip + limit < total
+
     result = []
     for v in videos:
         usuario = crud.get_usuario_by_id(db, v.id_usuario)
         etiqueta = crud.get_etiqueta_por_video(db, v.id_video)
         total_likes = crud.get_total_likes(db, v.id_video)
-        result.append(
-            {
-                "id_video": str(v.id_video),
-                "titulo": v.titulo,
-                "descripcion": v.descripcion,
-                "ruta": v.ruta,
-                "usuario": usuario.nombre if usuario else "Desconocido",
-                "etiqueta": etiqueta.nombre if etiqueta else "",
-                "likes": total_likes or 0,
-                "liked": False,
-                "fecha_subida": v.fecha_subida,
-                "duracion": str(v.duracion),
-            }
-        )
+        result.append({
+            "id_video": str(v.id_video),
+            "titulo": v.titulo,
+            "descripcion": v.descripcion,
+            "ruta": v.ruta,
+            "usuario": usuario.nombre if usuario else "Desconocido",
+            "etiqueta": etiqueta.nombre if etiqueta else "",
+            "likes": total_likes or 0,
+            "liked": False
+        })
     return {"page": page, "videos": result, "has_more": has_more}
+
+
+@app.post("/upload_video")
+def upload_video(
+    titulo: str = Form(...),
+    descripcion: str = Form(""),
+    etiqueta: str = Form(""),
+    id_usuario: int = Form(...),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    usuario = crud.get_usuario_by_id(db, id_usuario)
+    if not usuario:
+        raise HTTPException(status_code=401, detail="Usuario no válido")
+
+    filename = file.filename
+    save_path = os.path.join(VIDEO_DIR, filename)
+    os.makedirs(VIDEO_DIR, exist_ok=True)
+    with open(save_path, "wb") as buffer:
+        buffer.write(file.file.read())
+
+    # Calcular duración del video
+    if VideoFileClip is None:
+        raise HTTPException(status_code=500, detail="moviepy no está disponible en el entorno. Instala moviepy para subir videos.")
+    clip = VideoFileClip(save_path)
+    duracion = str(timedelta(seconds=clip.duration))
+    clip.close()
+
+    # Guardar en BD correctamente
+    ruta = f"media/{filename}"
+    nuevo = crud.crear_video(db, titulo, descripcion, duracion, id_usuario, ruta)
+
+    if etiqueta:
+        crud.crear_etiqueta(db, etiqueta, nuevo.id_video)
+
+    return {
+        "message": "Video subido correctamente",
+        "id_video": str(nuevo.id_video),
+        "ruta": ruta,
+        "duracion": duracion
+    }
+
+
+# 🔴 Desactiva la generación random de videos
+# @app.get("/videos/random")
+# def videos_random(id_usuario: int = Query(None), db: Session = Depends(get_db)):
+#     videos = db.query(Video).all()
+#     if not videos:
+#         raise HTTPException(status_code=404, detail="No hay videos disponibles")
+#     random.shuffle(videos)
+
+#     result = []
+#     for v in videos[:10]:
+#         usuario = crud.get_usuario_by_id(db, v.id_usuario)
+#         etiqueta = crud.get_etiqueta_por_video(db, v.id_video)
+#         total_likes = crud.get_total_likes(db, v.id_video)
+#         liked = (
+#             db.query(Like)
+#             .filter(Like.id_usuario == id_usuario, Like.id_video == v.id_video)
+#             .first() is not None
+#         ) if id_usuario else False
+
+#         result.append({
+#             "id_video": str(v.id_video),
+#             "titulo": v.titulo,
+#             "descripcion": v.descripcion,
+#             "ruta": v.ruta,
+#             "usuario": usuario.nombre if usuario else "Desconocido",
+#             "etiqueta": etiqueta.nombre if etiqueta else "",
+#             "likes": total_likes,
+#             "liked": liked
+#         })
+#     return result
+
+
+@app.get("/videos/{id_video}/like")
+def get_like_status(id_video: UUID, id_usuario: int, db: Session = Depends(get_db)):
+    video = crud.get_video_by_id(db, id_video)
+    if not video:
+        raise HTTPException(status_code=404, detail="Video no encontrado")
+
+    liked = crud.get_like(db, id_usuario, id_video) is not None
+    total_likes = crud.get_total_likes(db, id_video)
+    return {"likes": total_likes, "liked": liked}
+
+
+@app.post("/videos/{id_video}/like")
+def toggle_like(id_video: UUID, id_usuario: int, db: Session = Depends(get_db)):
+    video = crud.get_video_by_id(db, id_video)
+    if not video:
+        raise HTTPException(status_code=404, detail="Video no encontrado")
+
+    like = crud.get_like(db, id_usuario, id_video)
+    if like:
+        crud.delete_like(db, id_usuario, id_video)
+        liked = False
+    else:
+        crud.create_like(db, id_usuario, id_video)
+        liked = True
+
+    total_likes = crud.get_total_likes(db, id_video)
+    return {"likes": total_likes, "liked": liked}
+
 
 @app.delete("/videos/{id_video}")
 def eliminar_video(id_video: UUID, id_usuario: int, db: Session = Depends(get_db)):
-    """
-    Elimina un video si pertenece al usuario autenticado.
-    """
     video = crud.get_video_by_id(db, id_video)
     if not video:
         raise HTTPException(status_code=404, detail="Video no encontrado")
     if video.id_usuario != id_usuario:
         raise HTTPException(status_code=403, detail="No tienes permiso para eliminar este video")
+
     crud.eliminar_video(db, id_video)
     return {"message": "Video eliminado correctamente"}
 
-# ===================================================== # ❤️ LIKES # =====================================================
-@app.get("/videos/{id_video}/like", response_model=schemas.LikeResponse)
-def obtener_estado_like(id_video: UUID, id_usuario: int, db: Session = Depends(get_db)):
-    """
-    Devuelve si el usuario actual ha dado 'like' a un video
-    y el número total de 'likes' del mismo.
-    """
-    video = crud.get_video_by_id(db, id_video)
-    if not video:
-        raise HTTPException(status_code=404, detail="Video no encontrado")
-    like = crud.get_like(db, id_usuario, id_video)
-    liked = like.activo if like else False
-    total_likes = crud.get_total_likes(db, id_video)
-    return {"likes": total_likes, "liked": liked}
 
-@app.post("/videos/{id_video}/like", response_model=schemas.LikeResponse)
-def toggle_like(id_video: UUID, id_usuario: int, db: Session = Depends(get_db)):
+@app.get("/videos/nuevos")
+def obtener_videos_nuevos(ultimo_id: int = 0, db: Session = Depends(get_db)):
     """
-    Activa o desactiva el 'like' de un usuario sobre un video.
-    Actualiza automáticamente el contador.
+    Devuelve los videos más recientes con id_video > ultimo_id
     """
-    video = crud.get_video_by_id(db, id_video)
-    if not video:
-        raise HTTPException(status_code=404, detail="Video no encontrado")
-    like = crud.get_like(db, id_usuario, id_video)
-    if like:
-        nuevo_estado = not like.activo
-        crud.actualizar_estado_like(db, id_usuario, id_video, nuevo_estado)
-        liked = nuevo_estado
-    else:
-        crud.create_like(db, id_usuario, id_video)
-        liked = True
-    total_likes = crud.get_total_likes(db, id_video)
-    return {"likes": total_likes, "liked": liked}
+    videos = (
+        db.query(Video)
+        .filter(Video.id_usuario > ultimo_id)
+        .order_by(Video.fecha_subida.desc())
+        .limit(5)
+        .all()
+    )
+    return [
+        {
+            "id_video": str(v.id_video),
+            "titulo": v.titulo,
+            "descripcion": v.descripcion,
+            "ruta": v.ruta,
+        }
+        for v in videos
+    ]
 
-# ===================================================== # 👀 INTERACCIONES (VISTAS Y PROGRESO) # =====================================================
-@app.post("/videos/{id_video}/view")
-def registrar_vista(id_video: UUID, db: Session = Depends(get_db)):
-    """
-    Incrementa el contador de vistas del video especificado.
-    """
-    video = crud.get_video_by_id(db, id_video)
-    if not video:
-        raise HTTPException(status_code=404, detail="Video no encontrado")
-    interaccion = crud.registrar_vista(db, id_video)
-    return {"views": interaccion.total_vistas}
 
-@app.post("/videos/{id_video}/progress")
-def registrar_progreso(
-    id_video: UUID,
-    segundos_vistos: float = Form(...),
-    duracion_total: float = Form(...),
-    db: Session = Depends(get_db),
-):
-    """
-    Registra el tiempo total que el usuario ha visto de un video.
-    Permite calcular promedios de visualización.
-    """
-    video = crud.get_video_by_id(db, id_video)
-    if not video:
-        raise HTTPException(status_code=404, detail="Video no encontrado")
-    interaccion = crud.registrar_progreso(db, id_video, segundos_vistos, duracion_total)
-    return {
-        "message": "Progreso registrado",
-        "vistas": interaccion.total_vistas,
-        "promedio_tiempo_visto": str(interaccion.promedio_tiempo_visto),
-    }
-
-# ===================================================== # 🏷️ ETIQUETAS # =====================================================
-@app.get("/etiquetas", response_model=list[schemas.EtiquetaResponse])
+# =====================================================
+# 🏷️ ETIQUETAS
+# =====================================================
+@app.get("/etiquetas", response_model=List[schemas.EtiquetaResponse])
 def listar_etiquetas(db: Session = Depends(get_db)):
-    """Devuelve todas las etiquetas registradas."""
     return crud.listar_etiquetas(db)
+
 
 @app.post("/etiquetas", response_model=schemas.EtiquetaResponse)
 def crear_etiqueta(etiqueta: schemas.EtiquetaCreate, db: Session = Depends(get_db)):
-    """Crea una nueva etiqueta asociada a un video existente."""
     nueva = crud.crear_etiqueta(db, etiqueta.nombre, etiqueta.id_video)
     return schemas.EtiquetaResponse.from_orm(nueva)
 
-# ===================================================== # 🎲 VIDEOS ALEATORIOS # =====================================================
-@app.get("/videos/random")
-async def videos_random(
-    id_usuario: int = Query(...),
-    page: int = Query(1),
-    page_size: int = Query(3),
+
+# =====================================================
+# 📚 CONJUNTOS DE FLASHCARDS
+# =====================================================
+@app.post("/conjuntos", response_model=schemas.ConjuntoFlashcardResponse)
+def crear_conjunto(conjunto: schemas.ConjuntoFlashcardCreate, db: Session = Depends(get_db)):
+    """Crea un nuevo conjunto de flashcards"""
+    usuario = crud.get_usuario_by_id(db, conjunto.id_usuario)
+    if not usuario:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    
+    nuevo = crud.crear_conjunto_flashcard(db, conjunto.titulo, conjunto.descripcion, conjunto.id_usuario)
+    return schemas.ConjuntoFlashcardResponse.from_orm(nuevo)
+
+
+@app.get("/conjuntos", response_model=List[schemas.ConjuntoFlashcardResponse])
+def listar_conjuntos(id_usuario: int = Query(None), db: Session = Depends(get_db)):
+    """Lista todos los conjuntos de flashcards, opcionalmente filtrados por usuario"""
+    conjuntos = crud.get_conjuntos_flashcard(db, id_usuario)
+    return [schemas.ConjuntoFlashcardResponse.from_orm(c) for c in conjuntos]
+
+
+@app.get("/conjuntos/{id_conjunto}", response_model=schemas.ConjuntoConFlashcardsResponse)
+def obtener_conjunto(id_conjunto: int, db: Session = Depends(get_db)):
+    """Obtiene un conjunto específico con todas sus flashcards"""
+    conjunto = crud.get_conjunto_flashcard_by_id(db, id_conjunto)
+    if not conjunto:
+        raise HTTPException(status_code=404, detail="Conjunto no encontrado")
+    
+    flashcards = crud.get_flashcards_by_conjunto(db, id_conjunto)
+    return {
+        "id_conjunto": conjunto.id_conjunto,
+        "titulo": conjunto.titulo,
+        "descripcion": conjunto.descripcion,
+        "id_usuario": conjunto.id_usuario,
+    "fecha_creacion": conjunto.fecha_creacion if conjunto.fecha_creacion else None,
+        "flashcards": [schemas.FlashcardResponse.from_orm(f) for f in flashcards]
+    }
+
+
+@app.delete("/conjuntos/{id_conjunto}")
+def eliminar_conjunto(id_conjunto: int, id_usuario: int, db: Session = Depends(get_db)):
+    """Elimina un conjunto de flashcards"""
+    conjunto = crud.get_conjunto_flashcard_by_id(db, id_conjunto)
+    if not conjunto:
+        raise HTTPException(status_code=404, detail="Conjunto no encontrado")
+    if conjunto.id_usuario != id_usuario:
+        raise HTTPException(status_code=403, detail="No tienes permiso para eliminar este conjunto")
+    
+    crud.eliminar_conjunto_flashcard(db, id_conjunto)
+    return {"message": "Conjunto eliminado correctamente"}
+
+
+# =====================================================
+# 🎴 FLASHCARDS
+# =====================================================
+@app.post("/flashcards", response_model=schemas.FlashcardResponse)
+def crear_flashcard_endpoint(flashcard: schemas.FlashcardCreate, db: Session = Depends(get_db)):
+    """Crea una nueva flashcard"""
+    conjunto = crud.get_conjunto_flashcard_by_id(db, flashcard.id_conjunto)
+    if not conjunto:
+        raise HTTPException(status_code=404, detail="Conjunto no encontrado")
+    
+    nueva = crud.crear_flashcard(
+        db,
+        flashcard.titulo,
+        flashcard.contenido_frontal,
+        flashcard.contenido_trasero,
+        flashcard.id_conjunto,
+        flashcard.tipo_contenido,
+        flashcard.orden
+    )
+    return schemas.FlashcardResponse.from_orm(nueva)
+
+
+@app.get("/flashcards/{id_flashcard}", response_model=schemas.FlashcardResponse)
+def obtener_flashcard(id_flashcard: UUID, db: Session = Depends(get_db)):
+    """Obtiene una flashcard específica"""
+    flashcard = crud.get_flashcard_by_id(db, id_flashcard)
+    if not flashcard:
+        raise HTTPException(status_code=404, detail="Flashcard no encontrada")
+    return schemas.FlashcardResponse.from_orm(flashcard)
+
+
+@app.put("/flashcards/{id_flashcard}", response_model=schemas.FlashcardResponse)
+def actualizar_flashcard_endpoint(
+    id_flashcard: UUID,
+    flashcard_update: schemas.FlashcardUpdate,
     db: Session = Depends(get_db)
 ):
-    """
-    Devuelve una lista de videos aleatorios paginados (5 por página).
-    Solo carga más cuando se solicita una nueva página.
-    """
-    # Obtener todos los videos
-    todos_videos = crud.get_videos(db, skip=0, limit=crud.contar_videos(db))
-    import random
-    random.shuffle(todos_videos)
-    total = len(todos_videos)
-    start = (page - 1) * page_size
-    end = start + page_size
-    paged_videos = todos_videos[start:end]
-    if not paged_videos:
-        return {"videos": [], "has_more": False}
-    result = []
-    for v in paged_videos:
-        usuario = crud.get_usuario_by_id(db, v.id_usuario)
-        etiqueta = crud.get_etiqueta_por_video(db, v.id_video)
-        total_likes = crud.get_total_likes(db, v.id_video)
-        like = crud.get_like(db, id_usuario, v.id_video)
-        liked = like.activo if like else False
-        result.append(
-            {
-                "id_video": str(v.id_video),
-                "titulo": v.titulo,
-                "descripcion": v.descripcion,
-                "ruta": v.ruta,
-                "usuario": usuario.nombre if usuario else "Desconocido",
-                "etiqueta": etiqueta.nombre if etiqueta else "",
-                "likes": total_likes or 0,
-                "liked": liked,
-                "fecha_subida": v.fecha_subida,
-                "duracion": str(v.duracion),
-            }
-        )
-    has_more = end < total
-    return {"videos": result, "has_more": has_more}
+    """Actualiza una flashcard"""
+    flashcard = crud.get_flashcard_by_id(db, id_flashcard)
+    if not flashcard:
+        raise HTTPException(status_code=404, detail="Flashcard no encontrada")
+    
+    actualizada = crud.actualizar_flashcard(db, id_flashcard, **flashcard_update.dict(exclude_unset=True))
+    return schemas.FlashcardResponse.from_orm(actualizada)
+
+
+@app.delete("/flashcards/{id_flashcard}")
+def eliminar_flashcard_endpoint(id_flashcard: UUID, db: Session = Depends(get_db)):
+    """Elimina una flashcard"""
+    flashcard = crud.get_flashcard_by_id(db, id_flashcard)
+    if not flashcard:
+        raise HTTPException(status_code=404, detail="Flashcard no encontrada")
+    
+    crud.eliminar_flashcard(db, id_flashcard)
+    return {"message": "Flashcard eliminada correctamente"}
+
+
+@app.get("/conjuntos/{id_conjunto}/flashcards", response_model=List[schemas.FlashcardResponse])
+def listar_flashcards_conjunto(id_conjunto: int, db: Session = Depends(get_db)):
+    """Lista todas las flashcards de un conjunto"""
+    conjunto = crud.get_conjunto_flashcard_by_id(db, id_conjunto)
+    if not conjunto:
+        raise HTTPException(status_code=404, detail="Conjunto no encontrado")
+    
+    flashcards = crud.get_flashcards_by_conjunto(db, id_conjunto)
+    return [schemas.FlashcardResponse.from_orm(f) for f in flashcards]

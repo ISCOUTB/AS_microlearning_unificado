@@ -1,0 +1,15 @@
+.git
+.git/*
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+env/
+venv/
+node_modules/
+microlearning_app/
+assets/
+images/
+*.log
+*.bak
+.release_build
